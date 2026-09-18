@@ -15,6 +15,7 @@ class EndTaskReason(Enum):
     SYSTEM_CANCELLED = "system_cancelled"
     UNEXPECTED_ERROR = "unexpected_error"
     TRANSFER_CALL = "transfer_call"
+    TAKEOVER = "takeover"
     PIPELINE_ERROR = "pipeline_error"
 
 

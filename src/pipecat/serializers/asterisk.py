@@ -172,6 +172,11 @@ class AsteriskFrameSerializer(FrameSerializer):
             frame_reason = getattr(frame, "reason", None)
             logger.debug(f"Processing {type(frame).__name__} with reason: {frame_reason}")
 
+            if frame_reason == EndTaskReason.TAKEOVER.value:
+                # An operator takeover already swapped the bridge and hung this
+                # channel up from the ARI manager; neither strategy may run
+                # again against channels that are gone.
+                return None
             if frame_reason == EndTaskReason.TRANSFER_CALL.value and not self._transfer_attempted:
                 self._transfer_attempted = True
                 if self._transfer_strategy:
