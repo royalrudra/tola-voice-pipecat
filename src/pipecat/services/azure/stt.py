@@ -48,6 +48,9 @@ try:
         AudioStreamFormat,
         PushAudioInputStream,
     )
+    from azure.cognitiveservices.speech.languageconfig import (
+        AutoDetectSourceLanguageConfig,
+    )
     from azure.cognitiveservices.speech.dialog import AudioConfig
 except ModuleNotFoundError as e:
     logger.error(f"Exception: {e}")
@@ -122,6 +125,7 @@ class AzureSTTService(STTService):
         sample_rate: int | None = None,
         private_endpoint: str | None = None,
         endpoint_id: str | None = None,
+        auto_detect_languages: list[str] | None = None,
         settings: Settings | None = None,
         ttfs_p99_latency: float | None = AZURE_TTFS_P99,
         **kwargs,
@@ -142,6 +146,11 @@ class AzureSTTService(STTService):
             private_endpoint: Private endpoint for STT behind firewall.
                 See https://learn.microsoft.com/en-us/azure/ai-services/speech-service/speech-services-private-link?tabs=portal
             endpoint_id: Custom model endpoint id.
+            auto_detect_languages: BCP-47 candidate locales (e.g.
+                ``["ne-NP", "en-US"]``) for continuous language identification.
+                When given, Azure detects the spoken language per utterance and
+                reports it on the transcription frame, and ``language`` is
+                ignored.
             settings: Runtime-updatable settings. When provided alongside deprecated
                 parameters, ``settings`` values take precedence.
             ttfs_p99_latency: P99 latency from speech end to final transcript in seconds.
@@ -181,6 +190,16 @@ class AzureSTTService(STTService):
         if not region and not private_endpoint:
             raise ValueError("Either 'region' or 'private_endpoint' must be provided.")
 
+        self._auto_detect_languages = auto_detect_languages or None
+        # With language identification the recognizer takes its candidates from
+        # AutoDetectSourceLanguageConfig; a recognition language set alongside
+        # it is rejected by the service.
+        language_kwargs = (
+            {}
+            if self._auto_detect_languages
+            else {"speech_recognition_language": recognition_language}
+        )
+
         if private_endpoint:
             if region:
                 logger.warning(
@@ -189,13 +208,18 @@ class AzureSTTService(STTService):
             self._speech_config = SpeechConfig(
                 subscription=api_key,
                 endpoint=private_endpoint,
-                speech_recognition_language=recognition_language,
+                **language_kwargs,
             )
         else:
             self._speech_config = SpeechConfig(
                 subscription=api_key,
                 region=region,
-                speech_recognition_language=recognition_language,
+                **language_kwargs,
+            )
+
+        if self._auto_detect_languages:
+            self._speech_config.set_property(
+                PropertyId.SpeechServiceConnection_LanguageIdMode, "Continuous"
             )
 
         if endpoint_id:
@@ -343,8 +367,20 @@ class AzureSTTService(STTService):
 
             audio_config = AudioConfig(stream=self._audio_stream)
 
+            recognizer_kwargs = {}
+            if self._auto_detect_languages:
+                recognizer_kwargs["auto_detect_source_language_config"] = (
+                    AutoDetectSourceLanguageConfig(languages=self._auto_detect_languages)
+                )
+                logger.info(
+                    "Azure STT continuous language identification: "
+                    f"candidates={self._auto_detect_languages}"
+                )
+
             self._speech_recognizer = SpeechRecognizer(
-                speech_config=self._speech_config, audio_config=audio_config
+                speech_config=self._speech_config,
+                audio_config=audio_config,
+                **recognizer_kwargs,
             )
             self._speech_recognizer.recognizing.connect(self._on_handle_recognizing)
             self._speech_recognizer.recognized.connect(self._on_handle_recognized)
